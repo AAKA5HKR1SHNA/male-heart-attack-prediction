@@ -1,0 +1,138 @@
+---
+title: "SVM Code With Markdown"
+author: "Aakash Krishna"
+date: "2025-04-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+For this project, we hope to be able to predict the presence of heart attack history in male respondents based on their demographics and habits using data obtained from the National Health Interview Survey. We will be using support vector models in order to do so.
+
+We will first read in and format our NHIS data accordingly. When selecting our data, we choose to keep sample male adult survey records taken past 1997 (the first year after which values on the adult flag are valid) where the question of whether they had experienced a heart attack was answered. For values relating to consumption, we specifically chose variables where the unit of time was specified to be monthly, in order to not risk skewed data.
+
+The data is cleaned via a separate subset statement, where values outside our expected ranges (mainly responses coded as 'unknown') are removed. After this, we can remove rows with NA values in the columns we actually need.
+
+The remaining statements make modifications to the data based on information from the codebook. We divide the number of days alcohol is consumed in a year by 12 to get average alcohol consumption per month due to the large clustering in this variable around multiples of 12, which could otherwise skew our data. We also replace the survey's usage of 996 for extreme amounts of moderate activity with a more reasonable estimate of 720 minutes in order to not excessively skew the data. Additionally, we replace '25' hours of sleep (meaning that the respondent slept for less than 30 minutes) with 0, which would be more accurate. We also make a new variable to measure if the respondent has reported a heart attack or not, which is now a factor of either 0 (has not reported) or 1 (has reported a heart attack). Finally, we drop the columns that are no longer necessary (HEARTATTEV, YEAR, ASTATFLG, ALCDAYSYR, SEX).
+
+```{r}
+library(e1071)
+library(ggplot2)
+library(tidyverse)
+
+data <- read.csv('nhis_2022.csv')
+hdata <- subset(data[,c('YEAR', 'SEX', 'ASTATFLG','HEARTATTEV', 'HEIGHT', 'BMICALC', 'ALCDAYSYR', 'MOD10DMIN', 'JUICEMNO', 'SALSAMNO', 'TOMSAUCEMNO', 'SPORDRMNO', 'FRTDRINKMNO', 'COFETEAMNO', 'HRSLEEP')], (HEARTATTEV == 1 | HEARTATTEV == 2) & YEAR >= 1997 & ASTATFLG == 1 & ALCDAYSYR < 370 & SEX == 1)
+
+hdata_clean <- subset(hdata, !(HEIGHT %in% c(95, 96, 97, 98, 99)) | (BMICALC > 100.0) | !(MOD10DMIN %in% c(997, 998, 999)) | (JUICEMNO < 96) | (SALSAMNO < 996) | (TOMSAUCEMNO < 996) | (SPORDRMNO < 996) | (FRTDRINKMNO < 996) | (COFETEAMNO < 996) | !(HRSLEEP %in% c(0, 97, 98, 99)))
+hdata_clean <- na.omit(hdata_clean)
+hdata_clean$ALCDAYSM <- floor(hdata_clean$ALCDAYSYR / 12)
+
+hdata_clean$MOD10DMIN[hdata_clean$MOD10DMIN == 996] <- 720
+
+hdata_clean$HRSLEEP[hdata_clean$HRSLEEP == 25] <- 0
+
+hdata_clean$HTATK <- as.factor(hdata_clean$HEARTATTEV - 1)
+
+hdc <- subset(hdata_clean, select = -c(HEARTATTEV, YEAR, ASTATFLG, ALCDAYSYR, SEX))
+
+#hdc is short for health data clean
+
+```
+
+After we appropriately clean our data, we will divide it into training and test data sets before tuning our models and running them on the training data.
+
+```{r}
+
+set.seed(2)
+train <- sample(1:nrow(hdc), 9000)
+hdc.test <- hdc[-train,]
+hdc.train <- hdc[train,]
+
+tune.linear <- tune(svm, HTATK ~ ., data = hdc.train, kernel="linear", ranges= list(cost=c(0.01, 0.05, 0.1, 0.5, 1, 5, 10)))
+
+tune.radial <- tune(svm, HTATK ~ . -BMICALC -MOD10DMIN -HRSLEEP, data = hdc.train, kernel="radial", ranges= list(cost=c(0.01, 0.05, 0.1, 0.5, 1, 5, 10), gamma = c(0.001, 0.01, 0.1, 1, 10, 100)))
+
+tune.poly <- tune(svm, HTATK ~ . -SALSAMNO -TOMSAUCEMNO -SPORDRMNO, data = hdc.train, kernel="polynomial", ranges= list(cost=c(0.01, 0.05, 0.1, 0.5, 1, 5, 10), degree = c(2, 3, 4, 5)))
+
+```
+
+Now we run some predictions off our model with the test data set and graph it.
+
+```{r}
+
+pred.lin <- predict(tune.linear$best.model, hdc.test)
+
+pred.rad <- predict(tune.radial$best.model, hdc.test)
+
+pred.poly <- predict(tune.poly$best.model, hdc.test)
+
+```
+
+```{r}
+#Actual Data
+ggplot(hdc.test, aes(x = HEIGHT, y = BMICALC, color = HTATK)) +
+  geom_point() +
+  labs(
+    x = "Height",
+    y = "Calculated BMI",
+    color = "Report of Heart Attack (1 = Yes)",
+    title = "Actual Graph of Test Data"
+  ) +
+  scale_color_manual(values = c("steelblue", "coral")) +
+  theme_bw()
+
+#Linear model prediction
+ggplot(hdc.test, aes(x = HEIGHT, y = BMICALC, color = pred.lin)) +
+  geom_point() +
+  labs(
+    x = "Height",
+    y = "Calculated BMI",
+    color = "Report of Heart Attack (1 = Yes)",
+    title = "Linear Model Predictions"
+  ) +
+  scale_color_manual(values = c("steelblue", "coral")) +
+  theme_bw()
+
+#Radial model prediction
+ggplot(hdc.test, aes(x = HEIGHT, y = BMICALC, color = pred.rad)) +
+  geom_point() +
+  labs(
+    x = "Height",
+    y = "Calculated BMI",
+    color = "Report of Heart Attack (1 = Yes)",
+    title = "Radial Model Predictions"
+  ) +
+  scale_color_manual(values = c("steelblue", "coral")) +
+  theme_bw()
+
+#Polynomial model prediction
+ggplot(hdc.test, aes(x = HEIGHT, y = BMICALC, color = pred.poly)) +
+  geom_point() +
+  labs(
+    x = "Height",
+    y = "Calculated BMI",
+    color = "Report of Heart Attack (1 = Yes)",
+    title = "Polynomial Model Predictions"
+  ) +
+  scale_color_manual(values = c("steelblue", "coral")) +
+  theme_bw()
+```
+
+We can also calculate our test MSE (mean squared error) to get a numerical idea of how accurate our models are.
+
+```{r}
+#Test MSE for linear model
+mean((pred.lin != hdc.train$HTATK)^2)
+
+#Test MSE for radial model
+mean((pred.rad != hdc.train$HTATK)^2)
+
+#Test MSE for polynomial model
+mean((pred.poly != hdc.train$HTATK)^2)
+
+```
+
+
+
