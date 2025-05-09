@@ -1,7 +1,7 @@
 ---
 title: "SVM Code With Markdown"
 author: "Aakash Krishna"
-date: "2025-04-29"
+date: "2025-05-09"
 output: html_document
 ---
 
@@ -25,7 +25,7 @@ library(tidyverse)
 data <- read.csv('nhis_2022.csv')
 hdata <- subset(data[,c('YEAR', 'SEX', 'ASTATFLG','HEARTATTEV', 'HEIGHT', 'BMICALC', 'ALCDAYSYR', 'MOD10DMIN', 'JUICEMNO', 'SALSAMNO', 'TOMSAUCEMNO', 'SPORDRMNO', 'FRTDRINKMNO', 'COFETEAMNO', 'HRSLEEP')], (HEARTATTEV == 1 | HEARTATTEV == 2) & YEAR >= 1997 & ASTATFLG == 1 & ALCDAYSYR < 370 & SEX == 1)
 
-hdata_clean <- subset(hdata, !(HEIGHT %in% c(95, 96, 97, 98, 99)) | (BMICALC > 100.0) | !(MOD10DMIN %in% c(997, 998, 999)) | (JUICEMNO < 96) | (SALSAMNO < 996) | (TOMSAUCEMNO < 996) | (SPORDRMNO < 996) | (FRTDRINKMNO < 996) | (COFETEAMNO < 996) | !(HRSLEEP %in% c(0, 97, 98, 99)))
+hdata_clean <- subset(hdata, !(HEIGHT %in% c(95, 96, 97, 98, 99)) & (BMICALC < 100.0) & !(MOD10DMIN %in% c(997, 998, 999)) & (JUICEMNO < 96) & (SALSAMNO < 996) & (TOMSAUCEMNO < 996) & (SPORDRMNO < 996) & (FRTDRINKMNO < 996) & (COFETEAMNO < 996) & !(HRSLEEP %in% c(0, 97, 98, 99)))
 hdata_clean <- na.omit(hdata_clean)
 hdata_clean$ALCDAYSM <- floor(hdata_clean$ALCDAYSYR / 12)
 
@@ -45,16 +45,16 @@ After we appropriately clean our data, we will divide it into training and test 
 
 ```{r}
 
-set.seed(2)
-train <- sample(1:nrow(hdc), 9000)
+set.seed(5)
+train <- sample(1:nrow(hdc), 6000)
 hdc.test <- hdc[-train,]
 hdc.train <- hdc[train,]
 
-tune.linear <- tune(svm, HTATK ~ ., data = hdc.train, kernel="linear", ranges= list(cost=c(0.01, 0.05, 0.1, 0.5, 1, 5, 10)))
+tune.linear <- tune(svm, HTATK ~ ., data = hdc.train, kernel="linear", ranges= list(cost=c(0.001, 0.01, 0.1, 1)))
 
-tune.radial <- tune(svm, HTATK ~ . -BMICALC -MOD10DMIN -HRSLEEP, data = hdc.train, kernel="radial", ranges= list(cost=c(0.01, 0.05, 0.1, 0.5, 1, 5, 10), gamma = c(0.001, 0.01, 0.1, 1, 10, 100)))
+tune.radial <- tune(svm, HTATK ~ . -BMICALC -MOD10DMIN -HRSLEEP, data = hdc.train, kernel="radial", ranges= list(cost=c(0.001, 0.01, 0.1, 1), gamma = c(0.001, 0.01, 0.1, 1)))
 
-tune.poly <- tune(svm, HTATK ~ . -SALSAMNO -TOMSAUCEMNO -SPORDRMNO, data = hdc.train, kernel="polynomial", ranges= list(cost=c(0.01, 0.05, 0.1, 0.5, 1, 5, 10), degree = c(2, 3, 4, 5)))
+tune.poly <- tune(svm, HTATK ~ . -SALSAMNO -TOMSAUCEMNO -SPORDRMNO, data = hdc.train, kernel="polynomial", ranges= list(cost=c(0.001, 0.01, 0.1, 1), degree = c(2, 3, 4, 5)))
 
 ```
 
@@ -90,7 +90,7 @@ ggplot(hdc.test, aes(x = HEIGHT, y = BMICALC, color = pred.lin)) +
     x = "Height",
     y = "Calculated BMI",
     color = "Report of Heart Attack (1 = Yes)",
-    title = "Linear Model Predictions"
+    title = "Linear Model"
   ) +
   scale_color_manual(values = c("steelblue", "coral")) +
   theme_bw()
@@ -102,7 +102,7 @@ ggplot(hdc.test, aes(x = HEIGHT, y = BMICALC, color = pred.rad)) +
     x = "Height",
     y = "Calculated BMI",
     color = "Report of Heart Attack (1 = Yes)",
-    title = "Radial Model Predictions"
+    title = "Radial Model"
   ) +
   scale_color_manual(values = c("steelblue", "coral")) +
   theme_bw()
@@ -114,25 +114,51 @@ ggplot(hdc.test, aes(x = HEIGHT, y = BMICALC, color = pred.poly)) +
     x = "Height",
     y = "Calculated BMI",
     color = "Report of Heart Attack (1 = Yes)",
-    title = "Polynomial Model Predictions"
+    title = "Polynomial Model"
   ) +
   scale_color_manual(values = c("steelblue", "coral")) +
   theme_bw()
 ```
 
-We can also calculate our test MSE (mean squared error) to get a numerical idea of how accurate our models are.
+We can also calculate our test MSE (mean squared error) and confusion matrices to get a numerical idea of how accurate our models are.
 
 ```{r}
 #Test MSE for linear model
-mean((pred.lin != hdc.train$HTATK)^2)
+mean((pred.lin != hdc.test$HTATK)^2)
 
 #Test MSE for radial model
-mean((pred.rad != hdc.train$HTATK)^2)
+mean((pred.rad != hdc.test$HTATK)^2)
 
 #Test MSE for polynomial model
-mean((pred.poly != hdc.train$HTATK)^2)
+mean((pred.poly != hdc.test$HTATK)^2)
+
+#Confusion matrices for all three models
+table(pred.lin, hdc.test$HTATK)
+table(pred.rad, hdc.test$HTATK)
+table(pred.poly, hdc.test$HTATK)
 
 ```
+We also find the area under curve for all of our models.
 
+```{r}
+#Finding and plotting area under curve for all models
 
+library(pROC)
+roc_lin <- roc(response = hdc.test$HTATK, predictor =as.numeric(pred.lin))
 
+roc_rad <- roc(response = hdc.test$HTATK, predictor =as.numeric(pred.rad))
+
+roc_poly <- roc(response = hdc.test$HTATK, predictor =as.numeric(pred.poly))
+
+ggroc(roc_lin, color = 'coral') +
+  theme_bw()
+ggroc(roc_rad, color = 'coral') +
+  theme_bw()
+ggroc(roc_poly, color = 'coral') +
+  theme_bw()
+
+roc_lin
+roc_rad
+roc_poly
+
+```
